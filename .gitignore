@@ -1,10 +1,11 @@
 # Binaries for programs and plugins
-*.exe
+
 *.exe~
 *.dll
 *.so
 *.dylib
 SlicerA_*
+SlicerA.exe
 
 # Test binary, built with `go test -c`
 *.test
