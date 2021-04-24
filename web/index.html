@@ -2,9 +2,10 @@
     <head>
         <title>SlicerA</title>
         <!-- Using the build in css and library from ArozOS Core.-->
-        <link rel="stylesheet" href="../script/semantic/semantic.min.css">
-        <script src="../script/jquery.min.js"></script>
-        <script src="../script/semantic/semantic.min.js"></script>
+        <link rel="stylesheet" href="script/semantic/semantic.min.css">
+        <script src="script/jquery.min.js"></script>
+        <script src="script/semantic/semantic.min.js"></script>
+        <script src="script/viewstl/build/stl_viewer.min.js"></script>
         <script src="../script/ao_module.js"></script>
         <style>
             body{
@@ -45,11 +46,12 @@
             .column{
                 padding: 0px !important;
             }
+
         </style>
     </head>
     <body>
         <div class="ui grid">
-            <div class="ten wide column">
+            <div id="preview" class="ten wide column">
                 <iframe id="previewIframe" class="previewWindow" src='./nofile.html'>
 
                 </iframe>
@@ -147,6 +149,10 @@
                     <button id="slicebutton" onclick="previewGcode(this);" class="ui fluid disabled button actionbtn" style="background-color: #6e74dc; color: white; margin-top: 4px;">2. Slice to Gcode </button>
                     <button id="savebutton" onclick="saveGcode();" class="ui fluid disabled button actionbtn" style="background-color: #3849aa; color: white; margin-top: 4px;">3. Save to File</button>
                 </div>
+                <div id="authorAttributes" class="ui contaienr" style="padding: 4px;">
+                    <p><a href="https://github.com/tobychui/SlicerA" target="_blank">SlicerA</a> is CopyRight tobychui 2021, licensed under AGPL</p>
+                </div>
+                
             </div>
             <div id="savedDialog" class="ui basic modal">
                 <div class="ui icon header">
@@ -169,18 +175,34 @@
             let stlFilePath = "";
             let inputModelFilename = "";
             let currentSettings = {};
+            let standaloneMode = false;
+
+            //Send a warning to user about the ao_module not found issue
+            $(document).ready(function(){
+                console.log("Hey, if you see the ao_module.js not found error above this line, that means you are running this script in stand-alone mode which is normal :)");
+            });
 
             $('.ui.checkbox').checkbox();
             $(".ui.modal").modal();
 
             //Check if there are any input files
-            var inputFiles = ao_module_loadInputFiles();
-            if (inputFiles != null){
-                //We can only handle one file at a time
-                var file = inputFiles[0];
-                console.log(file);
-                loadSTLFile(file.filename, file.filepath);
+            if (typeof ao_module_loadInputFiles != 'undefined'){
+                var inputFiles = ao_module_loadInputFiles();
+                if (inputFiles != null){
+                    //We can only handle one file at a time
+                    var file = inputFiles[0];
+                    console.log(file);
+                    loadSTLFile(file.filename, file.filepath);
+                }else{
+                    $("#previewIframe").attr("src", "./nofile.html");
+                }
+
+                //There is no place to show the author attributes :(
+                $("#authorAttributes").hide();
             }else{
+                //Running in standalone mode. Hide the save to file
+                $("#savebutton").hide();
+                standaloneMode = true;
                 $("#previewIframe").attr("src", "./nofile.html");
             }
 
@@ -213,8 +235,55 @@
                 localStorage.setItem("SlicerA-settings", JSON.stringify(currentSettings));
             });
 
+            function handleSliceAndDownload(btn){
+                $(btn).addClass("loading");
+                //Read the file as blob
+                let reader = new FileReader();
+                reader.onload = function() {
+                    //console.log(reader.result);
+                    var configs = generateConfigFromForm();
+                    var options =JSON.stringify(configs);
+                    
+                    $.ajax({
+                        url: "./sliced?options=" + options,
+                        method: "POST",
+                        data: reader.result,
+                        success: function(data){
+                            if (data.error !== undefined){
+                                alert(data.error);
+                            }else{
+                                //OK! Download the return as gcode file
+                                var element = document.createElement('a');
+                                element.setAttribute('href', 'data:application/gcode;charset=utf-8,' + encodeURIComponent(data));
+                                element.setAttribute('download', stlFilePath.name.replace(".stl",".gcode"));
+
+                                element.style.display = 'none';
+                                document.body.appendChild(element);
+
+                                element.click();
+
+                                document.body.removeChild(element);
+
+                            }
+                            $(btn).removeClass("loading");
+
+                            //console.log(data);
+                        }
+                    })
+                    
+                };
+
+                reader.readAsDataURL(stlFilePath);
+            }
+
 
             function previewGcode(btn){
+                if (standaloneMode == true){
+                    //Running in standalone mode. Slice and download the file
+                    handleSliceAndDownload(btn);
+                    return;
+                }
+
                 //Generate a gcode at tmp folder and load it as preview
                 var configs = generateConfigFromForm();
                 if (stlFilePath == ""){
@@ -313,6 +382,7 @@
                 }
             }
 
+            //Load STL File in ArozOS mode
             function loadSTLFile(filename, filepath){
                 var targetURL = `../SystemAO/utilities/stlViewer.html#[{"filepath"%3A"${encodeURIComponent(filepath)}"%2C"filename"%3A"${filename}"}]`;
                 $("#previewIframe").attr("src", targetURL);
@@ -321,10 +391,53 @@
                 $("#savebutton").addClass("disabled");
             }
 
+            //Loading STL file in standalone mode
+            function standaloneLoadSTLFile(fileObject){
+                $("#preview").html(``);
+
+                //Start reading the stl file
+                const reader = new FileReader();
+                reader.addEventListener("load", function () {
+                    //Read completed. Pass it to STLviewer
+                    var stl_viewer=new StlViewer(document.getElementById("preview"), { 
+                        models: [{id: 0, filename: reader.result, color: "#757de8"}],
+                        canvas_height: window.innerHeight,
+                        canvas_width: "100%"
+                    });
+
+                    //Update the attributes for slicing
+                    stlFilePath = fileObject;
+                    $("#slicebutton").removeClass("disabled");
+
+                }, false);
+
+                if (fileObject) {
+                    reader.readAsDataURL(fileObject);
+                }
+
+
+
+               
+                console.log(fileObject);
+            }
+
             function selectFileToSlice(){
-                ao_module_openFileSelector(fileSelected, "", "file",false, option = {
-                    filter: ["stl"]   
-                });
+                if (standaloneMode){
+                    var input = document.createElement('input');
+                    input.type = "file";
+                    input.multiple = false;
+                    input.accept = ".stl";
+                    input.onchange = e => { 
+                        var files = e.target.files; 
+                        standaloneLoadSTLFile(files[0]);
+                    }
+                    input.click();
+                }else{
+                    ao_module_openFileSelector(fileSelected, "", "file",false, option = {
+                        filter: ["stl"]   
+                    });
+                }
+              
             }
 
             function fileSelected(filedata){

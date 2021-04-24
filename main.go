@@ -29,6 +29,10 @@ func SetupCloseHandler() {
 		<-c
 		log.Println("\r- Shutting down SlicerA module")
 
+		//Clean up the tmp folder if it exists
+		if fileExists("./tmp") {
+			os.RemoveAll("./tmp")
+		}
 		os.Exit(0)
 	}()
 }
@@ -46,8 +50,8 @@ func main() {
 		LaunchFWDir:  "SlicerA/index.html",
 		SupportEmb:   true,
 		LaunchEmb:    "SlicerA/index.html",
-		InitFWSize:   []int{720, 480},
-		InitEmbSize:  []int{720, 480},
+		InitFWSize:   []int{1060, 670},
+		InitEmbSize:  []int{1060, 670},
 		SupportedExt: []string{".stl"},
 	})
 
@@ -57,6 +61,7 @@ func main() {
 
 	//Handle the slicing process
 	http.HandleFunc("/slice", handleSlicing)
+	http.HandleFunc("/sliced", handleSliceAndDispose)
 	http.HandleFunc("/saveGcode", handleSaveGcode)
 
 	//Setup the close handler to handle Ctrl+C on terminal

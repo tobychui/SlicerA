@@ -1,16 +1,15 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -85,6 +84,73 @@ func handleSaveGcode(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+//Slice and return the results, dispose source
+func handleSliceAndDispose(w http.ResponseWriter, r *http.Request) {
+	options, err := mv(r, "options", false)
+	if err != nil {
+		sendErrorResponse(w, "Invalid options given")
+		return
+	}
+
+	stlContent, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		sendErrorResponse(w, "Unable to read stl content")
+		return
+	}
+
+	//Create a tmp folder
+	os.MkdirAll("./tmp", 0755)
+
+	//Buffer the received base64 stl file into the tmp folder
+	noheaderContent := strings.ReplaceAll(string(stlContent), "data:application/octet-stream;base64,", "")
+	dec, err := base64.StdEncoding.DecodeString(noheaderContent)
+	if err != nil {
+		sendErrorResponse(w, "Unable to read stl content")
+		return
+	}
+
+	//Write to file
+	fileID := strconv.Itoa(int(time.Now().Unix()))
+	tmpFilepath := filepath.Join("./tmp", fileID+".stl")
+	outFilepath := filepath.Join("./tmp", fileID+".gcode")
+
+	err = ioutil.WriteFile(tmpFilepath, dec, 0755)
+	if err != nil {
+		sendErrorResponse(w, "Write file to buffer folder failed")
+		return
+	}
+
+	//Parse the config
+	thisConfig := config{}
+	err = json.Unmarshal([]byte(options), &thisConfig)
+	if err != nil {
+		log.Println(err.Error())
+		sendErrorResponse(w, "Parse option failed")
+		return
+	}
+
+	//Slice the file
+	err = sliceFile(tmpFilepath, thisConfig, outFilepath)
+	if err != nil {
+		sendErrorResponse(w, err.Error())
+		return
+	}
+
+	//Get the output
+	finalGcode, err := ioutil.ReadFile(outFilepath)
+	if err != nil {
+		sendErrorResponse(w, err.Error())
+		return
+	}
+
+	//Remove the tmp files
+	os.Remove(tmpFilepath)
+	os.Remove(outFilepath)
+
+	//Send back to sliced Gcode
+	sendTextResponse(w, string(finalGcode))
+}
+
 //Handle slicing request and return the gcode
 func handleSlicing(w http.ResponseWriter, r *http.Request) {
 	//Get slicing profile
@@ -117,48 +183,7 @@ func handleSlicing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//Get executable base on platform
-	executable, err := selectBianry()
-	if err != nil {
-		sendErrorResponse(w, err.Error())
-		return
-	}
-
-	//Build the slicing paramter
-	slicingParamters := []string{rpath} //The first paramter is the stl filepath itself
-
-	slicingParamters = append(slicingParamters, "--hot-end-temperature="+strconv.Itoa(thisConfig.HotEndTemperature))
-	slicingParamters = append(slicingParamters, "--bed-temperature="+strconv.Itoa(thisConfig.BedTemperature))
-
-	//Calculate the center of the bed
-	bedCenterX := int(thisConfig.BedWidth * 1000 / 2)
-	bedCenterY := int(thisConfig.BedDepth * 1000 / 2)
-	slicingParamters = append(slicingParamters, "--center="+strconv.Itoa(bedCenterX)+"_"+strconv.Itoa(int(bedCenterY))+"_0")
-
-	slicingParamters = append(slicingParamters, "--extrusion-width="+strconv.Itoa(thisConfig.ExtrusionWidth))
-	slicingParamters = append(slicingParamters, "--filament-diameter="+strconv.Itoa(thisConfig.FilamentDiameter))
-	slicingParamters = append(slicingParamters, "--layer-thickness="+strconv.Itoa(thisConfig.LayerThickness))
-	slicingParamters = append(slicingParamters, "--extrusion-multiplier="+strconv.Itoa(thisConfig.ExtrusionMultiplier))
-	slicingParamters = append(slicingParamters, "--layer-speed="+strconv.Itoa(thisConfig.LayerSpeed))
-
-	slicingParamters = append(slicingParamters, "--move-speed="+strconv.Itoa(thisConfig.MoveSpeed))
-	slicingParamters = append(slicingParamters, "--number-top-layers="+strconv.Itoa(thisConfig.NumberTopLayers))
-	slicingParamters = append(slicingParamters, "--number-bottom-layers="+strconv.Itoa(thisConfig.NumberBottomLayers))
-	slicingParamters = append(slicingParamters, "--brim-count="+strconv.Itoa(thisConfig.BrimCount))
-	slicingParamters = append(slicingParamters, "--skirt-count="+strconv.Itoa(thisConfig.SkirtCount))
-
-	//Initial layer settings
-	slicingParamters = append(slicingParamters, "--initial-bed-temperature="+strconv.Itoa(thisConfig.InitialBedTemperature))
-	slicingParamters = append(slicingParamters, "--initial-hot-end-temperature="+strconv.Itoa(thisConfig.InitialHotEndTemperature))
-	slicingParamters = append(slicingParamters, "--initial-layer-speed="+strconv.Itoa(thisConfig.InitialLayerSpeed))
-	slicingParamters = append(slicingParamters, "--initial-layer-thickness="+strconv.Itoa(thisConfig.InitialLayerThickness))
-
-	//Use support
-	if thisConfig.SupportEnabled {
-		slicingParamters = append(slicingParamters, "--support-enabled")
-	}
-
-	//Execute the slicing to tmp folder
+	//Get the output filename from ArozOS
 	tmpFolderAbsolutePath, err := resolveVirtualPath(w, r, "tmp:/SlicerA/")
 	if err != nil {
 		sendErrorResponse(w, err.Error())
@@ -172,51 +197,14 @@ func handleSlicing(w http.ResponseWriter, r *http.Request) {
 	outputFilename := strconv.Itoa(int(time.Now().Unix())) + ".gcode"
 	outputFilepath := filepath.Join(tmpFolderAbsolutePath, outputFilename)
 
-	//Inject the output filepath to the slicing paramter
-	slicingParamters = append(slicingParamters, "--output="+outputFilepath)
-
-	cmd := exec.Command(executable, slicingParamters...)
-	out, err := cmd.CombinedOutput()
+	err = sliceFile(rpath, thisConfig, outputFilepath)
 	if err != nil {
 		sendErrorResponse(w, err.Error())
+		return
 	}
-	//OK
-	log.Println(string(out))
 
 	//Return the filename for preview
 	js, _ := json.Marshal(filepath.ToSlash(filepath.Join("tmp:/SlicerA/", outputFilename)))
 	sendJSONResponse(w, string(js))
 
-}
-
-func selectBianry() (string, error) {
-	binaryName := "./goslice/goslice"
-	binaryExecPath := ""
-	if runtime.GOOS == "linux" {
-		if runtime.GOARCH == "arm" {
-			binaryExecPath = binaryName + "-linux-arm.elf"
-		} else if runtime.GOARCH == "arm64" {
-			binaryExecPath = binaryName + "-linux-arm64.elf"
-		} else if runtime.GOARCH == "386" {
-			binaryExecPath = binaryName + "-linux-386.elf"
-		} else if runtime.GOARCH == "amd64" {
-			binaryExecPath = binaryName + "-linux-amd64.elf"
-		}
-
-		if binaryExecPath != "" {
-			//Set it to absolute for cross platform compeibility
-			abspath, _ := filepath.Abs(binaryExecPath)
-			return abspath, nil
-		} else {
-			return "", errors.New("Platform not supported")
-		}
-
-	} else if runtime.GOOS == "windows" {
-		binaryExecPath = binaryName + "-windows-amd64.exe"
-		abspath, _ := filepath.Abs(binaryExecPath)
-		return abspath, nil
-	} else {
-		//Not supported
-		return "", errors.New("Platform not supported")
-	}
 }
