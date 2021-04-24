@@ -70,7 +70,7 @@ Then, navigate to http://localhost for using the standalone web slicer interface
 You can also change the port where it listen to using  - port flag as follows
 
 ```
-./SlicerA -port 8080
+./SlicerA -port :8080
 ```
 
 **Due to AGPL limitation, there is no Gcode previewer in the standalone mode.  Gocde file will be downloaded directly when you press the "Slice to Gcode" button.**
