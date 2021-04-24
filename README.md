@@ -58,9 +58,10 @@ cd ./SlicerA
 go build
 ```
 
-Next, start the application with the following command
+Next, setup the permission for to goslice binaries and start the application with the following command
 
 ```
+sudo chmod 755 -R ./goslice
 ./SlicerA
 >> SlicerA started. Listening on :80
 ```
