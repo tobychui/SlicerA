@@ -102,7 +102,7 @@ func handleSliceAndDispose(w http.ResponseWriter, r *http.Request) {
 	os.MkdirAll("./tmp", 0755)
 
 	//Buffer the received base64 stl file into the tmp folder
-	noheaderContent := strings.ReplaceAll(string(stlContent), "data:application/octet-stream;base64,", "")
+	noheaderContent := strings.SplitN(string(stlContent), ",", 2)[1]
 	dec, err := base64.StdEncoding.DecodeString(noheaderContent)
 	if err != nil {
 		sendErrorResponse(w, "Unable to read stl content")
