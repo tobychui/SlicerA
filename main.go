@@ -5,20 +5,27 @@ package main
 	The basic 3D model slicer for 3D printer based on GoSlice open souce project
 
 	Author: tobychui
+
+	Notes:
+	In theory all tmp files created by this program will be removed by itself after
+	program terminate.
 */
 
 import (
+	"flag"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"imuslab.com/SlicerA/mod/aroz"
 )
 
 var (
-	handler *aroz.ArozHandler
+	handler       *aroz.ArozHandler
+	tmpFolderPath = flag.String("tmp", "./", "The location to save buffered files. A tmp folder will be created in this path.")
 )
 
 //Kill signal handler. Do something before the system the core terminate.
@@ -30,14 +37,15 @@ func SetupCloseHandler() {
 		log.Println("\r- Shutting down SlicerA module")
 
 		//Clean up the tmp folder if it exists
-		if fileExists("./tmp") {
-			os.RemoveAll("./tmp")
+		if fileExists(*tmpFolderPath) {
+			os.RemoveAll(*tmpFolderPath)
 		}
 		os.Exit(0)
 	}()
 }
 
 func main() {
+
 	//Start the aoModule pipeline (which will parse the flags as well). Pass in the module launch information
 	handler = aroz.HandleFlagParse(aroz.ServiceInfo{
 		Name:         "SlicerA",
@@ -54,6 +62,9 @@ func main() {
 		InitEmbSize:  []int{1060, 670},
 		SupportedExt: []string{".stl"},
 	})
+
+	finalTempFolderPath := filepath.Join(*tmpFolderPath, "tmp")
+	tmpFolderPath = &finalTempFolderPath
 
 	//Register the standard web services urls
 	fs := http.FileServer(http.Dir("./web"))

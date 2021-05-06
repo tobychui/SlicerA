@@ -99,7 +99,7 @@ func handleSliceAndDispose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//Create a tmp folder
-	os.MkdirAll("./tmp", 0755)
+	os.MkdirAll(*tmpFolderPath, 0755)
 
 	//Buffer the received base64 stl file into the tmp folder
 	noheaderContent := strings.SplitN(string(stlContent), ",", 2)[1]
@@ -111,8 +111,8 @@ func handleSliceAndDispose(w http.ResponseWriter, r *http.Request) {
 
 	//Write to file
 	fileID := strconv.Itoa(int(time.Now().Unix()))
-	tmpFilepath := filepath.Join("./tmp", fileID+".stl")
-	outFilepath := filepath.Join("./tmp", fileID+".gcode")
+	tmpFilepath := filepath.Join(*tmpFolderPath, fileID+".stl")
+	outFilepath := filepath.Join(*tmpFolderPath, fileID+".gcode")
 
 	err = ioutil.WriteFile(tmpFilepath, dec, 0755)
 	if err != nil {

@@ -1,11 +1,16 @@
 <html>
     <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="ie=edge">
+        <link rel="shortcut icon" type="image/jpg" href="img/small_icon.png"/>
         <title>SlicerA</title>
         <!-- Using the build in css and library from ArozOS Core.-->
         <link rel="stylesheet" href="script/semantic/semantic.min.css">
         <script src="script/jquery.min.js"></script>
         <script src="script/semantic/semantic.min.js"></script>
         <script src="script/viewstl/build/stl_viewer.min.js"></script>
+        <script src="script/gcode-viewer/gcode-viewer.min.js"></script>
         <script src="../script/ao_module.js"></script>
         <style>
             body{
@@ -40,7 +45,7 @@
 
             .optionbar{
                 overflow-y: scroll;
-                max-height: 80%;
+                max-height: calc(100% - 220px);
             }
 
             .column{
@@ -176,6 +181,7 @@
             let inputModelFilename = "";
             let currentSettings = {};
             let standaloneMode = false;
+            let bufferedGcode = "";
 
             //Send a warning to user about the ao_module not found issue
             $(document).ready(function(){
@@ -201,7 +207,6 @@
                 $("#authorAttributes").hide();
             }else{
                 //Running in standalone mode. Hide the save to file
-                $("#savebutton").hide();
                 standaloneMode = true;
                 $("#previewIframe").attr("src", "./nofile.html");
             }
@@ -235,7 +240,7 @@
                 localStorage.setItem("SlicerA-settings", JSON.stringify(currentSettings));
             });
 
-            function handleSliceAndDownload(btn){
+            function handleSliceAndDownload(btn, callback=undefined){
                 $(btn).addClass("loading");
                 //Read the file as blob
                 let reader = new FileReader();
@@ -252,17 +257,11 @@
                             if (data.error !== undefined){
                                 alert(data.error);
                             }else{
-                                //OK! Download the return as gcode file
-                                var element = document.createElement('a');
-                                element.setAttribute('href', 'data:application/gcode;charset=utf-8,' + encodeURIComponent(data));
-                                element.setAttribute('download', stlFilePath.name.replace(".stl",".gcode"));
-
-                                element.style.display = 'none';
-                                document.body.appendChild(element);
-
-                                element.click();
-
-                                document.body.removeChild(element);
+                                if (callback != undefined){
+                                    callback(data);
+                                }else{
+                                    console.log(data);
+                                }
 
                             }
                             $(btn).removeClass("loading");
@@ -276,11 +275,42 @@
                 reader.readAsDataURL(stlFilePath);
             }
 
+            function downloadBufferedGcode(gcodeData){
+                //OK! Download the return as gcode file
+                var element = document.createElement('a');
+                element.setAttribute('href', 'data:application/gcode;charset=utf-8,' + encodeURIComponent(gcodeData));
+                element.setAttribute('download', stlFilePath.name.replace(".stl",".gcode"));
+
+                element.style.display = 'none';
+                document.body.appendChild(element);
+
+                element.click();
+
+                document.body.removeChild(element);
+            }
+
 
             function previewGcode(btn){
                 if (standaloneMode == true){
                     //Running in standalone mode. Slice and download the file
-                    handleSliceAndDownload(btn);
+                    handleSliceAndDownload(btn, function(gcode){
+                        //Update the global gcode buffer and ready to be downloaded
+                        bufferedGcode = gcode;
+
+                        //Render the gcode to preview
+                        var renderer = new gcodeViewer.GCodeRenderer(gcode, $("#preview").width(), $("#preview").height(), new gcodeViewer.Color(0x808080))
+                        renderer.colorizer = new gcodeViewer.SimpleColorizer(new gcodeViewer.Color("#f0f043"))
+                        $("#preview").html("");
+                        $("#preview").append(renderer.element())
+                        renderer.render().then(() => {
+                            //Append flag to the viewer to mark it as auto resize canvas
+                            $("#preview").find("canvas").addClass("autoresize");
+
+                            //Allow gcode saving
+                            $("#savebutton").removeClass("disabled");
+                        });
+
+                    });
                     return;
                 }
 
@@ -356,13 +386,20 @@
                     outputFilename = tmp.join(".") + ".gcode";
                 }
 
-                //Open File selector at the same folder as the src stl
-                var tmp = stlFilePath.split("/");
-                tmp.pop();
-                var defaultPath = tmp.join("/");
-                ao_module_openFileSelector(handleFileSave, defaultPath, "new",false, {
-                    defaultName: outputFilename
-                });
+
+                if (standaloneMode){
+                    //Use the gcode in buffer
+                    downloadBufferedGcode(bufferedGcode);
+                }else{
+                    //Open File selector at the same folder as the src stl
+                    var tmp = stlFilePath.split("/");
+                    tmp.pop();
+                    var defaultPath = tmp.join("/");
+                    ao_module_openFileSelector(handleFileSave, defaultPath, "new",false, {
+                        defaultName: outputFilename
+                    });
+                }
+               
 
             }
 
@@ -414,9 +451,6 @@
                 if (fileObject) {
                     reader.readAsDataURL(fileObject);
                 }
-
-
-
                
                 console.log(fileObject);
             }
@@ -455,6 +489,13 @@
             function handleWindowResize(){
                 $("iframe").css("height", window.innerHeight);
                 $("#optionForm").css("height",window.innerHeight - 200);
+                if ($("#preview").find(".autoresize").length > 0){
+                    var targetCanvas = $("#preview").find(".autoresize");
+                    $(targetCanvas).css({
+                        width:  $("#preview").width(),
+                        height:  $("#preview").height()
+                    })
+                }
             }
 
             handleWindowResize();
