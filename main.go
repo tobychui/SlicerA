@@ -44,6 +44,19 @@ func SetupCloseHandler() {
 	}()
 }
 
+//Special router to handle js files on Windows 10 invalid mime sissue
+func mrouter(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if filepath.Ext(r.RequestURI) == ".js" && fileExists(filepath.Join("./web/", r.RequestURI)) {
+			//Requesting a js file
+			w.Header().Add("Content-Type", "text/javascript")
+			h.ServeHTTP(w, r)
+		} else {
+			h.ServeHTTP(w, r)
+		}
+	})
+}
+
 func main() {
 
 	//Start the aoModule pipeline (which will parse the flags as well). Pass in the module launch information
@@ -68,7 +81,7 @@ func main() {
 
 	//Register the standard web services urls
 	fs := http.FileServer(http.Dir("./web"))
-	http.Handle("/", fs)
+	http.Handle("/", mrouter(fs))
 
 	//Handle the slicing process
 	http.HandleFunc("/slice", handleSlicing)

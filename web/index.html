@@ -45,7 +45,7 @@
 
             .optionbar{
                 overflow-y: scroll;
-                max-height: calc(100% - 220px);
+                max-height: calc(100% - 230px);
             }
 
             .column{
@@ -182,6 +182,7 @@
             let currentSettings = {};
             let standaloneMode = false;
             let bufferedGcode = "";
+            let standalone_gcodeRenderer = null;
 
             //Send a warning to user about the ao_module not found issue
             $(document).ready(function(){
@@ -308,6 +309,9 @@
 
                             //Allow gcode saving
                             $("#savebutton").removeClass("disabled");
+
+                            //Set the renderer to global object
+                            standalone_gcodeRenderer = renderer;
                         });
 
                     });
@@ -494,7 +498,11 @@
                     $(targetCanvas).css({
                         width:  $("#preview").width(),
                         height:  $("#preview").height()
-                    })
+                    });
+
+                    if (standalone_gcodeRenderer != null){
+                        standalone_gcodeRenderer.resize($("#preview").width(), $("#preview").height());
+                    }
                 }
             }
 

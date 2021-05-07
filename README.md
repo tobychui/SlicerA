@@ -10,7 +10,7 @@ A web based STL to Gcode slicer for ArozOS
 
 - Go 1.15 or above
 - Debian Buster on ARM, x64 or Windows on x64 platforms
-- [ArozOS](https://github.com/tobychui/arozos) v1.111 or above
+- [ArozOS](https://github.com/tobychui/arozos) v1.111 or above (Recommended)
 
 ### Build
 
@@ -74,8 +74,6 @@ You can also change the port where it listen to using  - port flag as follows
 ./SlicerA -port :8080
 ```
 
-**Due to AGPL limitation, there is no Gcode previewer in the standalone mode.  Gocde file will be downloaded directly when you press the "Slice to Gcode" button.**
-
 
 
 ## Screenshots
@@ -106,6 +104,8 @@ Interface under standalone mode
 
 ![](img/standalone.png)
 
+![](img/gcv.png)
+
 ## License
 
 Please see the LICENSE file
@@ -117,4 +117,6 @@ Please see the LICENSE file
 This project is powered by the amazing Golang written STL to Gcode slicer named [GoSlice](https://github.com/aligator/GoSlice)
 
 The STL Viewer in standalone mode is powered by [viewstl](https://github.com/omrips/viewstl) licensed under MIT. See web/script/viewstl/LICENSE for more information.
+
+The gcode viewer is powered by the [gcode-viewer](https://github.com/aligator/gcode-viewer) library which is also licensed under MIT.
 
