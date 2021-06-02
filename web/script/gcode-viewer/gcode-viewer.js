@@ -51127,6 +51127,16 @@ class LineTubeGeometry extends three_1.BufferGeometry {
         this.pointsLength = 0;
         this.radialSegments = radialSegments;
     }
+    dispose() {
+        super.dispose();
+        this.pointsBuffer = [];
+        this.normals = [];
+        this.vertices = [];
+        this.colors = [];
+        this.uvs = [];
+        this.indices = [];
+        this.segmentsRadialNumbers = [];
+    }
     add(point) {
         this.pointsLength++;
         this.pointsBuffer.push(point);
@@ -51139,8 +51149,16 @@ class LineTubeGeometry extends three_1.BufferGeometry {
         }
     }
     finish() {
-        // generate the last segment
-        this.generateSegment(1);
+        // If the there are only two points in total it has to 
+        // be handled separately as the add mehtod only starts 
+        // segment generation at min 3 points.
+        if (this.pointsBuffer.length == 2) {
+            this.generateSegment(0);
+        }
+        else {
+            // In all other cases generate the last segment.
+            this.generateSegment(1);
+        }
         this.setAttribute('position', new three_1.Float32BufferAttribute(this.vertices, 3));
         this.setAttribute('normal', new three_1.Float32BufferAttribute(this.normals, 3));
         this.setAttribute('color', new three_1.Float32BufferAttribute(this.colors, 3));
@@ -51151,6 +51169,11 @@ class LineTubeGeometry extends three_1.BufferGeometry {
         this.setIndex(this.indices);
         // not needed anymore
         this.segmentsRadialNumbers = [];
+        // these are now in the attribute buffers - can be deleted
+        this.normals = [];
+        this.colors = [];
+        this.uvs = [];
+        // The vertices are needed to slice. For now they need to be kept.
     }
     pointsCount() {
         return this.pointsLength;
@@ -51162,6 +51185,10 @@ class LineTubeGeometry extends three_1.BufferGeometry {
      * @param end the ending segment (excluding)
      */
     slice(start = 0, end = this.pointsLength) {
+        if (start === end) {
+            this.setIndex([]);
+            return;
+        }
         // TODO: support negative values like the slice from Array?
         if (start < 0 || end < 0) {
             throw new Error("negative values are not supported, yet");
@@ -51170,9 +51197,11 @@ class LineTubeGeometry extends three_1.BufferGeometry {
         let startI = start * seg * 2;
         let endI = (end - 1) * seg * 2;
         if (end === this.pointsLength) {
+            // add the ending
             endI += this.radialSegments * 6;
         }
         if (start > 0) {
+            // remove the starting
             startI += this.radialSegments * 6;
         }
         // TODO: render an 'ending / starting' so that there is no hole.
@@ -51181,10 +51210,14 @@ class LineTubeGeometry extends three_1.BufferGeometry {
     generateSegment(i) {
         var _a;
         let prevPoint = this.pointsBuffer[i - 1];
-        // point 1 and 2 should always exist
+        // point and nextPoint should always exist... 
         let point = this.pointsBuffer[i];
         let nextPoint = this.pointsBuffer[i + 1];
         let nextNextPoint = this.pointsBuffer[i + 2];
+        // ...except only one line exists in total
+        if (nextPoint === undefined) {
+            return;
+        }
         const frame = this.computeFrenetFrames([point.point, nextPoint.point], false);
         const lastRadius = ((_a = this.pointsBuffer[i - 1]) === null || _a === void 0 ? void 0 : _a.radius) || 0;
         function createPointData(pointNr, radialNr, normal, point, radius, color) {
@@ -51408,11 +51441,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GCodeRenderer = void 0;
 const three_1 = __webpack_require__(212);
 const OrbitControls_1 = __webpack_require__(886);
-const LineTubeGeometry_1 = __webpack_require__(837);
-const LinePoint_1 = __webpack_require__(302);
-const SegmentColorizer_1 = __webpack_require__(346);
+const parser_1 = __webpack_require__(215);
 /**
- * GCode rendere which parses a GCode file and displays it using
+ * GCode renderer which parses a GCode file and displays it using
  * three.js. Use .element() to retrieve the DOM canvas element.
  */
 class GCodeRenderer {
@@ -51428,6 +51459,308 @@ class GCodeRenderer {
      */
     constructor(gCode, width, height, background) {
         this.lineMaterial = new three_1.MeshPhongMaterial({ vertexColors: true });
+        this.scene = new three_1.Scene();
+        this.renderer = new three_1.WebGLRenderer();
+        this.renderer.setSize(width, height);
+        this.renderer.setClearColor(background, 1);
+        this.camera = this.newCamera(width, height);
+        this.parser = new parser_1.GCodeParser(gCode);
+    }
+    // Public configurations: 
+    /**
+     * Width of travel-lines. Use 0 to hide them.
+     *
+     * @type number
+     */
+    get travelWidth() {
+        return this.parser.travelWidth;
+    }
+    /**
+     * Width of travel-lines. Use 0 to hide them.
+     *
+     * @type number
+     */
+    set travelWidth(w) {
+        this.parser.travelWidth = w;
+    }
+    /**
+     * Set any colorizer implementation to change the segment color based on the segment
+     * metadata. Some default implementations are provided.
+     *
+     * @type SegmentColorizer
+     */
+    get colorizer() {
+        return this.parser.colorizer;
+    }
+    /**
+     * Set any colorizer implementation to change the segment color based on the segment
+     * metadata. Some default implementations are provided.
+     *
+     * @type SegmentColorizer
+     */
+    set colorizer(colorizer) {
+        this.parser.colorizer = colorizer;
+    }
+    /**
+     * The number of radial segments per line.
+     * Less (e.g. 3) provides faster rendering with less memory usage.
+     * More (e.g. 8) provides a better look.
+     *
+     * @default 8
+     * @type number
+     */
+    get radialSegments() {
+        return this.parser.radialSegments;
+    }
+    /**
+     * The number of radial segments per line.
+     * Less (e.g. 3) provides faster rendering with less memory usage.
+     * More (e.g. 8) provides a better look.
+     *
+     * @default 8
+     * @type number
+     */
+    set radialSegments(segments) {
+        this.parser.radialSegments = segments;
+    }
+    /**
+     * Internally the rendered object is split into several. This allows to reduce the
+     * memory consumption while rendering.
+     * You can set the number of points per object.
+     * In most cases you can leave this at the default.
+     *
+     * @default 120000
+     * @type number
+     */
+    get pointsPerObject() {
+        return this.parser.pointsPerObject;
+    }
+    /**
+     * Internally the rendered object is split into several. This allows to reduce the
+     * memory consumption while rendering.
+     * You can set the number of points per object.
+     * In most cases you can leave this at the default.
+     *
+     * @default 120000
+     * @type number
+     */
+    set pointsPerObject(num) {
+        this.parser.pointsPerObject = num;
+    }
+    /**
+     * This can be used to retrieve some min / max values which may
+     * be needed as param for a colorizer.
+     * @returns {{
+     *         minTemp: number | undefined,
+     *         maxTemp: number,
+     *         minSpeed: number | undefined,
+     *         maxSpeed: number
+     *     }}
+     */
+    getMinMaxValues() {
+        return this.parser.getMinMaxValues();
+    }
+    newCamera(width, height) {
+        var _a;
+        const camera = new three_1.PerspectiveCamera(75, width / height, 0.1, 1000);
+        if (this.cameraControl) {
+            this.cameraControl.dispose();
+        }
+        this.cameraControl = new OrbitControls_1.OrbitControls(camera, this.renderer.domElement);
+        this.cameraControl.enablePan = true;
+        this.cameraControl.enableZoom = true;
+        this.cameraControl.minDistance = -Infinity;
+        this.cameraControl.maxDistance = Infinity;
+        (_a = this.cameraControl) === null || _a === void 0 ? void 0 : _a.addEventListener("change", () => {
+            requestAnimationFrame(() => this.draw());
+        });
+        return camera;
+    }
+    fitCamera() {
+        var _a, _b, _c, _d;
+        const boundingBox = new three_1.Box3(this.parser.min, this.parser.max);
+        const center = new three_1.Vector3();
+        boundingBox.getCenter(center);
+        this.camera.position.x = (((_a = this.parser.min) === null || _a === void 0 ? void 0 : _a.x) || 0) + ((((_b = this.parser.max) === null || _b === void 0 ? void 0 : _b.x) || 0) - (((_c = this.parser.min) === null || _c === void 0 ? void 0 : _c.x) || 0)) / 2;
+        this.camera.position.z = (((_d = this.parser.max) === null || _d === void 0 ? void 0 : _d.z) || 0);
+        if (this.cameraControl) {
+            this.cameraControl.target = center;
+        }
+        this.camera.lookAt(center);
+        this.draw();
+    }
+    /**
+     * Reads the GCode and renders it to a mesh.
+     */
+    render() {
+        return __awaiter(this, void 0, void 0, function* () {
+            this.parser.parse();
+            this.parser.getGeometries().forEach(g => {
+                this.scene.add(new three_1.Mesh(g, this.lineMaterial));
+            });
+            // Set up some lights.
+            const ambientLight = new three_1.AmbientLight(0xffffff, 0.5);
+            this.scene.add(ambientLight);
+            const spotLight = new three_1.SpotLight(0xffffff, 0.9);
+            spotLight.position.set(200, 400, 300);
+            spotLight.lookAt(new three_1.Vector3(0, 0, 0));
+            const spotLight2 = new three_1.SpotLight(0xffffff, 0.9);
+            spotLight2.position.set(-200, -400, -300);
+            spotLight2.lookAt(new three_1.Vector3(0, 0, 0));
+            this.scene.add(spotLight);
+            this.scene.add(spotLight2);
+            this.fitCamera();
+        });
+    }
+    draw() {
+        if (this.parser.getGeometries().length === 0 || this.camera === undefined) {
+            return;
+        }
+        this.renderer.render(this.scene, this.camera);
+    }
+    /**
+     * Slices the rendered model based on the passed start and end point numbers.
+     * (0, pointsCount()) renders everything
+     *
+     * Note: Currently negative values are not allowed.
+     *
+     * @param {number} start the starting segment
+     * @param {number} end the ending segment (excluding)
+     */
+    slice(start = 0, end = this.pointsCount()) {
+        this.parser.slice(start, end);
+        this.draw();
+    }
+    /**
+     * Slices the rendered model based on the passed start and end line numbers.
+     * (0, layerCount()) renders everything
+     *
+     * Note: Currently negative values are not allowed.
+     *
+     * @param {number} start the starting layer
+     * @param {number} end the ending layer (excluding)
+     */
+    sliceLayer(start, end) {
+        this.parser.sliceLayer(start, end);
+        this.draw();
+    }
+    /**
+     * Retrieve the dom html canvas element where
+     * the GCode viewer draws to.
+     * @returns {HTMLCanvasElement}
+     */
+    element() {
+        return this.renderer.domElement;
+    }
+    /**
+     * disposes everything which is dispose able.
+     * Call this always before destroying the instance.""
+     */
+    dispose() {
+        var _a;
+        (_a = this.cameraControl) === null || _a === void 0 ? void 0 : _a.dispose();
+        this.parser.dispose();
+    }
+    /**
+     * Get the amount of points in the model.
+     *
+     * @returns {number}
+     */
+    pointsCount() {
+        return this.parser.pointsCount();
+    }
+    /**
+     * Get the amount of layers in the model.
+     * This is an approximation which may be incorrect if the
+     * nozzle moves downwards mid print.
+     *
+     * @returns {number}
+     */
+    layerCount() {
+        return this.parser.layerCount();
+    }
+    /**
+     * This can be called when a resize of the canvas is needed.
+     *
+     * @param {number} width
+     * @param {number} height
+     */
+    resize(width, height) {
+        this.renderer.setSize(width, height);
+        const rot = this.camera.rotation;
+        const pos = this.camera.position;
+        this.camera = this.newCamera(width, height);
+        this.fitCamera();
+        this.camera.rotation.copy(rot);
+        this.camera.position.copy(pos);
+        this.draw();
+    }
+}
+exports.GCodeRenderer = GCodeRenderer;
+
+
+/***/ }),
+
+/***/ 607:
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Color = void 0;
+__exportStar(__webpack_require__(838), exports);
+__exportStar(__webpack_require__(346), exports);
+var three_1 = __webpack_require__(212);
+Object.defineProperty(exports, "Color", ({ enumerable: true, get: function () { return three_1.Color; } }));
+
+
+/***/ }),
+
+/***/ 215:
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GCodeParser = void 0;
+const three_1 = __webpack_require__(212);
+const LineTubeGeometry_1 = __webpack_require__(837);
+const LinePoint_1 = __webpack_require__(302);
+const SegmentColorizer_1 = __webpack_require__(346);
+/**
+ * GCode renderer which parses a GCode file and displays it using
+ * three.js. Use .element() to retrieve the DOM canvas element.
+ */
+class GCodeParser {
+    /**
+     * Creates a new GCode renderer for the given gcode.
+     * It initializes the canvas to the given size and
+     * uses the passed color as background.
+     *
+     * @param {string} gCode
+     * @param {number} width
+     * @param {number} height
+     * @param {Color} background
+     */
+    constructor(gCode) {
+        this.combinedLines = [];
         this.minTemp = undefined;
         this.maxTemp = 0;
         this.minSpeed = undefined;
@@ -51456,11 +51789,16 @@ class GCodeRenderer {
          * @type number
          */
         this.radialSegments = 8;
-        this.scene = new three_1.Scene();
-        this.renderer = new three_1.WebGLRenderer();
-        this.renderer.setSize(width, height);
-        this.renderer.setClearColor(background, 1);
-        this.camera = this.newCamera(width, height);
+        /**
+         * Internally the rendered object is split into several. This allows to reduce the
+         * memory consumption while rendering.
+         * You can set the number of points per object.
+         * In most cases you can leave this at the default.
+         *
+         * @default 120000
+         * @type number
+         */
+        this.pointsPerObject = 120000;
         this.gCode = gCode;
         // Pre-calculate some min max values, needed for colorizing.
         this.calcMinMaxMetadata();
@@ -51482,35 +51820,6 @@ class GCodeRenderer {
             minSpeed: this.minSpeed,
             maxSpeed: this.maxSpeed
         };
-    }
-    newCamera(width, height) {
-        var _a;
-        const camera = new three_1.PerspectiveCamera(75, width / height, 0.1, 1000);
-        if (this.cameraControl) {
-            this.cameraControl.dispose();
-        }
-        this.cameraControl = new OrbitControls_1.OrbitControls(camera, this.renderer.domElement);
-        this.cameraControl.enablePan = true;
-        this.cameraControl.enableZoom = true;
-        this.cameraControl.minDistance = -Infinity;
-        this.cameraControl.maxDistance = Infinity;
-        (_a = this.cameraControl) === null || _a === void 0 ? void 0 : _a.addEventListener("change", () => {
-            requestAnimationFrame(() => this.draw());
-        });
-        return camera;
-    }
-    fitCamera() {
-        var _a, _b, _c, _d;
-        const boundingBox = new three_1.Box3(this.min, this.max);
-        const center = new three_1.Vector3();
-        boundingBox.getCenter(center);
-        this.camera.position.x = (((_a = this.min) === null || _a === void 0 ? void 0 : _a.x) || 0) + ((((_b = this.max) === null || _b === void 0 ? void 0 : _b.x) || 0) - (((_c = this.min) === null || _c === void 0 ? void 0 : _c.x) || 0)) / 2;
-        this.camera.position.z = (((_d = this.max) === null || _d === void 0 ? void 0 : _d.z) || 0);
-        if (this.cameraControl) {
-            this.cameraControl.target = center;
-        }
-        this.camera.lookAt(center);
-        this.draw();
     }
     /**
      * Recalculate the bounding box with the new point.
@@ -51585,9 +51894,9 @@ class GCodeRenderer {
         });
     }
     /**
-     * Reads the GCode and renders it to a mesh.
+     * Reads the GCode and crates a mesh of it.
      */
-    render() {
+    parse() {
         return __awaiter(this, void 0, void 0, function* () {
             // Cache the start and end of each layer.
             // Note: This may not work properly in some cases where the nozzle moves back down mid-print.
@@ -51597,6 +51906,7 @@ class GCodeRenderer {
                 x: false, y: false, z: false, e: false
             };
             // Save some values
+            let lastLastPoint = new three_1.Vector3(0, 0, 0);
             let lastPoint = new three_1.Vector3(0, 0, 0);
             let lastE = 0;
             let lastF = 0;
@@ -51614,12 +51924,31 @@ class GCodeRenderer {
                 }
                 return val;
             };
-            // Create the geometry.
-            this.combinedLine = new LineTubeGeometry_1.LineTubeGeometry(this.radialSegments);
-            const lines = this.gCode.split("\n");
+            let lines = this.gCode.split("\n");
             this.gCode = ""; // clear memory
+            let currentObject = 0;
+            let lastAddedLinePoint = undefined;
+            let pointCount = 0;
+            const addLine = (newLine) => {
+                if (pointCount > 0 && pointCount % this.pointsPerObject == 0) {
+                    // end the old geometry and increase the counter
+                    this.combinedLines[currentObject].finish();
+                    currentObject++;
+                }
+                if (this.combinedLines[currentObject] === undefined) {
+                    this.combinedLines[currentObject] = new LineTubeGeometry_1.LineTubeGeometry(this.radialSegments);
+                    if (lastAddedLinePoint) {
+                        this.combinedLines[currentObject].add(lastAddedLinePoint);
+                    }
+                }
+                this.combinedLines[currentObject].add(newLine);
+                lastAddedLinePoint = newLine;
+                pointCount++;
+            };
+            // Create the geometry.
+            //this.combinedLines[oNr] = new LineTubeGeometry(this.radialSegments)
             lines.forEach((line, i) => {
-                if (this.combinedLine === undefined || line === undefined) {
+                if (line === undefined) {
                     return;
                 }
                 // Split off comments.
@@ -51635,7 +51964,6 @@ class GCodeRenderer {
                     const newPoint = new three_1.Vector3(x, y, z);
                     const curve = new three_1.LineCurve3(lastPoint, newPoint);
                     const length = curve.getLength();
-                    // TODO: why are there some with length 0? Is it an error in GoSlice??
                     if (length !== 0) {
                         let radius = (e - lastE) / length * 10;
                         if (radius == 0) {
@@ -51657,7 +51985,7 @@ class GCodeRenderer {
                         // As the GCode contains the extrusion for the 'current' line, 
                         // but the LinePoint contains the radius for the 'next' line
                         // we need to combine the last point with the current radius.
-                        this.combinedLine.add(new LinePoint_1.LinePoint(lastPoint.clone(), radius, color));
+                        addLine(new LinePoint_1.LinePoint(lastPoint.clone(), radius, color));
                         // Try to figure out the layer start and end points.
                         if (lastPoint.z !== newPoint.z) {
                             let last = layerPointsCache.get(lastPoint.z);
@@ -51674,13 +52002,14 @@ class GCodeRenderer {
                                     start: 0
                                 };
                             }
-                            last.end = this.combinedLine.pointsCount() - 1;
-                            current.start = this.combinedLine.pointsCount();
+                            last.end = pointCount - 1;
+                            current.start = pointCount;
                             layerPointsCache.set(lastPoint.z, last);
                             layerPointsCache.set(newPoint.z, current);
                         }
                     }
                     // Save the data.
+                    lastLastPoint.copy(lastPoint);
                     lastPoint.copy(newPoint);
                     lastE = e;
                     lastF = f;
@@ -51688,6 +52017,7 @@ class GCodeRenderer {
                 }
                 else if (cmd[0] === "G92") {
                     // set state
+                    lastLastPoint.copy(lastPoint);
                     lastPoint = new three_1.Vector3(this.parseValue(cmd.find((v) => v[0] === "X")) || lastPoint.x, this.parseValue(cmd.find((v) => v[0] === "Y")) || lastPoint.y, this.parseValue(cmd.find((v) => v[0] === "Z")) || lastPoint.z);
                     lastE = this.parseValue(cmd.find((v) => v[0] === "E")) || lastE;
                     // Hot end temperature.
@@ -51699,33 +52029,18 @@ class GCodeRenderer {
                 }
                 lines[i] = undefined;
             });
-            // Calculate the mesh.
-            this.combinedLine.finish();
-            this.scene.add(new three_1.Mesh(this.combinedLine, this.lineMaterial));
+            // Finish last object
+            if (this.combinedLines[currentObject]) {
+                this.combinedLines[currentObject].finish();
+            }
             // Sort the layers by starting line number.
             this.layerIndex = Array.from(layerPointsCache.values()).sort((v1, v2) => v1.start - v2.start);
-            // Set up some lights.
-            const ambientLight = new three_1.AmbientLight(0xffffff, 0.5);
-            this.scene.add(ambientLight);
-            const spotLight = new three_1.SpotLight(0xffffff, 0.9);
-            spotLight.position.set(200, 400, 300);
-            spotLight.lookAt(new three_1.Vector3(0, 0, 0));
-            const spotLight2 = new three_1.SpotLight(0xffffff, 0.9);
-            spotLight2.position.set(-200, -400, -300);
-            spotLight2.lookAt(new three_1.Vector3(0, 0, 0));
-            this.scene.add(spotLight);
-            this.scene.add(spotLight2);
-            this.fitCamera();
+            // Set the end of the last layer correctly.
+            this.layerIndex[this.layerIndex.length - 1].end = this.pointsCount() - 1;
         });
     }
-    draw() {
-        if (this.combinedLine === undefined || this.camera === undefined) {
-            return;
-        }
-        this.renderer.render(this.scene, this.camera);
-    }
     /**
-     * Slices the rendered model based on the passed start and end line numbers.
+     * Slices the rendered model based on the passed start and end point numbers.
      * (0, pointsCount()) renders everything
      *
      * Note: Currently negative values are not allowed.
@@ -51733,10 +52048,41 @@ class GCodeRenderer {
      * @param {number} start the starting segment
      * @param {number} end the ending segment (excluding)
      */
-    slice(start, end) {
-        var _a;
-        (_a = this.combinedLine) === null || _a === void 0 ? void 0 : _a.slice(start, end);
-        this.draw();
+    slice(start = 0, end = this.pointsCount()) {
+        // TODO: support negative values like the slice from Array?
+        if (start < 0 || end < 0) {
+            throw new Error("negative values are not supported, yet");
+        }
+        const objectStart = Math.floor(start / this.pointsPerObject);
+        const objectEnd = Math.ceil(end / this.pointsPerObject) - 1;
+        this.combinedLines.forEach((line, i) => {
+            // Render nothing if both are the same (and not undefined)
+            if (start !== undefined && start === end) {
+                line.slice(0, 0);
+                return;
+            }
+            let from = 0;
+            let to = line.pointsCount();
+            if (i == objectStart) {
+                from = start - i * this.pointsPerObject;
+                // If it is not the first object, remove the first point from the calculation.
+                if (objectStart > 0) {
+                    from++;
+                }
+            }
+            if (i == objectEnd) {
+                to = end - i * this.pointsPerObject;
+                // Only if it is not the last object, add the last point to the calculation.
+                if (objectEnd <= Math.floor(this.pointsCount() / this.pointsPerObject)) {
+                    to++;
+                }
+            }
+            if (i < objectStart || i > objectEnd) {
+                from = 0;
+                to = 0;
+            }
+            line.slice(from, to);
+        });
     }
     /**
      * Slices the rendered model based on the passed start and end line numbers.
@@ -51748,27 +52094,15 @@ class GCodeRenderer {
      * @param {number} end the ending layer (excluding)
      */
     sliceLayer(start, end) {
-        var _a, _b, _c;
-        (_a = this.combinedLine) === null || _a === void 0 ? void 0 : _a.slice(start && ((_b = this.layerIndex[start]) === null || _b === void 0 ? void 0 : _b.start), end && ((_c = this.layerIndex[end]) === null || _c === void 0 ? void 0 : _c.end));
-        this.draw();
-    }
-    /**
-     * Retrieve the dom html canvas element where
-     * the GCode viewer draws to.
-     * @returns {HTMLCanvasElement}
-     */
-    element() {
-        return this.renderer.domElement;
+        var _a, _b;
+        this.slice(start && ((_a = this.layerIndex[start]) === null || _a === void 0 ? void 0 : _a.start), end && ((_b = this.layerIndex[end]) === null || _b === void 0 ? void 0 : _b.end) + 1);
     }
     /**
      * disposes everything which is dispose able.
      * Call this always before destroying the instance.""
      */
     dispose() {
-        var _a, _b, _c;
-        (_a = this.cameraControl) === null || _a === void 0 ? void 0 : _a.dispose();
-        (_b = this.combinedLine) === null || _b === void 0 ? void 0 : _b.dispose();
-        (_c = this.texture) === null || _c === void 0 ? void 0 : _c.dispose();
+        this.combinedLines.forEach(e => e.dispose());
     }
     /**
      * Get the amount of points in the model.
@@ -51776,8 +52110,15 @@ class GCodeRenderer {
      * @returns {number}
      */
     pointsCount() {
-        var _a;
-        return ((_a = this.combinedLine) === null || _a === void 0 ? void 0 : _a.pointsCount()) || 0;
+        return this.combinedLines.reduce((count, line, i) => {
+            // Do not count the first point of all objects after the first one.
+            // This point is always the same as the last from the previous object.
+            // The very first point is still counted -> i > 0.
+            if (i > 0) {
+                return count + line.pointsCount() - 1;
+            }
+            return count + line.pointsCount();
+        }, 0);
     }
     /**
      * Get the amount of layers in the model.
@@ -51787,50 +52128,19 @@ class GCodeRenderer {
      * @returns {number}
      */
     layerCount() {
-        return this.layerIndex.length || 0;
+        // the last layer contains only the start-point, not an end point. -> -1
+        return this.layerIndex.length - 1 || 0;
     }
     /**
-     * This can be called when a resize of the canvas is needed.
-     *
-     * @param {number} width
-     * @param {number} height
+     * You can get the internal geometries generated from the gcode.
+     * Use only if you know what you do.
+     * @returns the internal generated geometries.
      */
-    resize(width, height) {
-        this.renderer.setSize(width, height);
-        const rot = this.camera.rotation;
-        const pos = this.camera.position;
-        this.camera = this.newCamera(width, height);
-        this.fitCamera();
-        this.camera.rotation.copy(rot);
-        this.camera.position.copy(pos);
-        this.draw();
+    getGeometries() {
+        return this.combinedLines;
     }
 }
-exports.GCodeRenderer = GCodeRenderer;
-
-
-/***/ }),
-
-/***/ 607:
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __exportStar = (this && this.__exportStar) || function(m, exports) {
-    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.Color = void 0;
-__exportStar(__webpack_require__(838), exports);
-__exportStar(__webpack_require__(346), exports);
-var three_1 = __webpack_require__(212);
-Object.defineProperty(exports, "Color", ({ enumerable: true, get: function () { return three_1.Color; } }));
+exports.GCodeParser = GCodeParser;
 
 
 /***/ })
