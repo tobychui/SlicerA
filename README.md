@@ -2,15 +2,15 @@
 
 # SlicerA
 
-A web based STL to Gcode slicer for ArozOS
+A self hosted, web based STL to Gcode slicer
 
 ## Installation
 
 ### Requirement
 
 - Go 1.15 or above
-- Debian Buster on ARM, x64 or Windows on x64 platforms
-- [ArozOS](https://github.com/tobychui/arozos) v1.111 or above (Recommended)
+- Debian Buster on ARM, x64 or Windows on x64 platforms (Yes, it works on Raspberry Pi)
+- [ArozOS](https://github.com/tobychui/arozos) v1.111 or above (Optional)
 
 ### Build
 
@@ -36,7 +36,9 @@ A web based STL to Gcode slicer for ArozOS
    ```
    sudo systemctl restart arozos
    ```
-
+### Update GoSlice binary
+To update GoSlice binary, use the ```update.sh``` script located inside ```goslice/```. 
+You will also need to clone to [GoSlice](https://github.com/aligator/GoSlice) repo into the ```goslice/``` folder inorder for the update script to work.
 
 
 ## Usage
