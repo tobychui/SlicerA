@@ -155,7 +155,7 @@
                     <button id="savebutton" onclick="saveGcode();" class="ui fluid disabled button actionbtn" style="background-color: #3849aa; color: white; margin-top: 4px;">3. Save to File</button>
                 </div>
                 <div id="authorAttributes" class="ui contaienr" style="padding: 4px;">
-                    <p><a href="https://github.com/tobychui/SlicerA" target="_blank">SlicerA</a> is CopyRight tobychui 2021, licensed under AGPL</p>
+                    <p><a href="https://github.com/tobychui/SlicerA" target="_blank">SlicerA</a> is CopyRight tobychui <span class="year"></span>, licensed under Apache-2.0 License </p>
                 </div>
                 
             </div>
@@ -187,6 +187,7 @@
             //Send a warning to user about the ao_module not found issue
             $(document).ready(function(){
                 console.log("Hey, if you see the ao_module.js not found error above this line, that means you are running this script in stand-alone mode which is normal :)");
+                $(".year").text(new Date().getFullYear());
             });
 
             $('.ui.checkbox').checkbox();
